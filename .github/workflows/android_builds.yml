@@ -1,0 +1,66 @@
+name: Build Android (EIRTeam.FFmpeg - minimal)
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        arch: [arm64-v8a, arm-v7a]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            build-essential \
+            ninja-build \
+            meson \
+            pkg-config \
+            python3 \
+            python3-pip \
+            yasm \
+            nasm \
+            unzip \
+            git \
+            curl
+
+      - name: Setup Android NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set NDK environment
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
+
+      - name: Bootstrap build system
+        run: make bootstrap
+
+      - name: Build FFmpeg (sin iconv y sin lame)
+        run: |
+          export FFMPEG_EXTRA_CONFIGURE_FLAGS="--disable-iconv --disable-libmp3lame"
+
+          if [ "${{ matrix.arch }}" = "arm64-v8a" ]; then
+            make gdextension PLATFORM=android
+          else
+            make gdextension PLATFORM=android TARGET_ARCH=arm-v7a
+          fi
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p artifacts/${{ matrix.arch }}
+          cp -r bin/android/* artifacts/${{ matrix.arch }}/ || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ matrix.arch }}
+          path: artifacts/${{ matrix.arch }}
