@@ -1,66 +1,66 @@
-name: Build Android (EIRTeam.FFmpeg - minimal)
+name: Build FFmpeg for Android (No libiconv, No lame)
 
 on:
-  push:
-  pull_request:
+  workflow_dispatch: # Permite activar el flujo de trabajo manualmente
+  # push: # Descomenta para activar en cada push
+  #   branches: [ "main" ]
 
 jobs:
-  build-android:
+  build:
+    name: Build FFmpeg Android (${{ matrix.target_arch }})
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
-        arch: [arm64-v8a, arm-v7a]
+        include:
+          # Configuración para 64 bits (arm64-v8a)
+          - target_arch: arm64-v8a
+            ffmpeg_arch: aarch64
+            toolchain_prefix: aarch64-linux-android
+            api_level: 21
+          # Configuración para 32 bits (armeabi-v7a)
+          - target_arch: armeabi-v7a
+            ffmpeg_arch: armv7a
+            toolchain_prefix: armv7a-linux-androideabi
+            api_level: 19
 
     steps:
-      - name: Checkout repo
+      # 1. Obtener el código fuente del repositorio
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: 'recursive' # Esencial para descargar las fuentes de ffmpeg-kit y otros submódulos[citation:1]
 
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y \
-            build-essential \
-            ninja-build \
-            meson \
-            pkg-config \
-            python3 \
-            python3-pip \
-            yasm \
-            nasm \
-            unzip \
-            git \
-            curl
-
+      # 2. Configurar el NDK de Android
       - name: Setup Android NDK
-        uses: android-actions/setup-android@v3
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d # Recomendado por ser la versión LTS más reciente
+          add-to-path: false
 
-      - name: Set NDK environment
-        run: |
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_ROOT" >> $GITHUB_ENV
-
-      - name: Bootstrap build system
+      # 3. Construir las dependencias (Make bootstrap)
+      - name: Bootstrap build tools
         run: make bootstrap
+        # Este paso ejecuta el script de bootstrap del proyecto original[citation:1]
 
-      - name: Build FFmpeg (sin iconv y sin lame)
+      # 4. Compilar la extensión GDExtension para Android
+      - name: Build GDExtension for ${{ matrix.target_arch }}
+        env:
+          ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          export FFMPEG_EXTRA_CONFIGURE_FLAGS="--disable-iconv --disable-libmp3lame"
+          # Sobrescribir las opciones por defecto para desactivar lame y libiconv
+          # La configuración --disable-encoder=libmp3lame elimina el soporte para MP3 vía LAME
+          # La configuración --disable-libiconv suprime la conversión de caracteres
+          export FFMPEG_EXTRA_CONFIG="--disable-encoder=libmp3lame --disable-libiconv"
+          
+          # Ejecutar el comando de compilación definido en la documentación del proyecto[citation:1]
+          make gdextension PLATFORM=android TARGET_ARCH=${{ matrix.target_arch }}
 
-          if [ "${{ matrix.arch }}" = "arm64-v8a" ]; then
-            make gdextension PLATFORM=android
-          else
-            make gdextension PLATFORM=android TARGET_ARCH=arm-v7a
-          fi
-
-      - name: Collect artifacts
-        run: |
-          mkdir -p artifacts/${{ matrix.arch }}
-          cp -r bin/android/* artifacts/${{ matrix.arch }}/ || true
-
-      - name: Upload artifacts
+      # 5. Empaquetar y subir los artefactos (bibliotecas .so resultantes)
+      - name: Upload build artifacts for ${{ matrix.target_arch }}
         uses: actions/upload-artifact@v4
         with:
-          name: android-${{ matrix.arch }}
-          path: artifacts/${{ matrix.arch }}
+          name: ffmpeg-android-libs-${{ matrix.target_arch }}
+          path: |
+            # Ajusta esta ruta si la salida de la compilación se genera en otro directorio
+            bin/**/libffmpeg*.so
